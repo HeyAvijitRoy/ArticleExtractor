@@ -1,5 +1,5 @@
 # Article Extractor (Newspaper3k + Chrome Extension)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Release](https://img.shields.io/github/v/release/HeyAvijitRoy/ArticleExtractor?include_prereleases&label=Release)](https://github.com/HeyAvijitRoy/ArticleExtractor/releases/tag/v2.0.0)
 
 Extract clean sentences from news articles with one click, right from your browser.
 
