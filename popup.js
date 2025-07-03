@@ -1,3 +1,4 @@
+// Autjhor: Avijit Roy
 // Get the extract button and status element from the DOM
 const extractBtn = document.getElementById('extractBtn');
 const statusDiv = document.getElementById('status');

@@ -3,6 +3,8 @@
   "name": "Article Extractor (Newspaper3k)",
   "version": "2.0",
   "description": "Uses a local Python server with Newspaper3k to extract article text.",
+  "homepage_url": "https://github.com/HeyAvijitRoy/ArticleExtractor",
+  "author": "Avijit Roy",
   "permissions": [
     "activeTab",
     "downloads"
