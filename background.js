@@ -39,22 +39,19 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           return;
         }
 
-        console.log("Received text from server.");
-        // Split the text into sentences using a robust regex
-        let sentences = data.text.match(/(.+?[.!?])(?=\s+|$)/g) || [];
-        if (sentences) {
-            sentences = sentences.map(sentence => sentence.trim());
-        }
+        console.log("Received sentences from server.");
+        // Use sentences directly from the server response
+        let sentences = data.sentences || [];
 
         const jsonContent = JSON.stringify(sentences, null, 2);
         const url = 'data:application/json;charset=utf-8,' + encodeURIComponent(jsonContent);
 
         // Use the article title from the server for the filename
-        const pageTitle = data.title.replace(/[^a-z0-9]/gi, '_').toLowerCase();
-        
+        const pageTitle = data.title ? data.title.replace(/[^a-z0-9]/gi, '_').toLowerCase() : 'article';
+
         chrome.downloads.download({
           url: url,
-          filename: `${pageTitle || 'article'}_export.json`,
+          filename: `${pageTitle}_export.json`,
           saveAs: true
         });
 

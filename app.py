@@ -1,24 +1,38 @@
+# app.py
+# Flask backend for extracting and sentence-splitting news articles via NLTK
+# Requires NLTK 'punkt' data downloaded to NLTK_DATA_DIR
+
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from newspaper import Article, Config
+from newspaper import Article
+import os
+import nltk
 
-# Configuration for newspaper3k
-# Set a user agent to avoid issues with some websites that block requests without a user agent
-USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
-config = Config()
-config.browser_user_agent = USER_AGENT
-config.request_timeout = 10 # Set a 10-second timeout for requests
+# --- NLTK Data Path Configuration ---
+NLTK_DATA_DIR = r'C:\Users\Avijit.Pi-ThinkPad\nltk_data'
+nltk.data.path.clear()  # Remove default paths (sanity)
+nltk.data.path.append(NLTK_DATA_DIR)
 
+from nltk.tokenize import sent_tokenize
+
+# --- Request Headers for Robust Article Download ---
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
+    'Accept-Language': 'en-US,en;q=0.9',
+}
+
+# --- Flask App Initialization ---
 app = Flask(__name__)
-# CORS is required to allow the Chrome extension to make requests to this server
 CORS(app)
+
+# --- API Endpoint: Article Extraction ---
 @app.route('/extract', methods=['POST'])
 def extract_article():
     """
-    Receives a URL from a POST request, extracts the article content using newspaper3k,
-    and returns the title and text as JSON.
+    Receives a URL, extracts article content, tokenizes it into sentences,
+    and returns the title and a list of sentences as JSON.
     """
-    # Get the JSON data from the request
     data = request.get_json()
     if not data or 'url' not in data:
         return jsonify({'error': 'URL not provided'}), 400
@@ -27,19 +41,23 @@ def extract_article():
     print(f"Received URL for processing: {url}")
 
     try:
-        # Create an Article object
-        article = Article(url, config=config)
-        
-        # Download and parse the article
+        article = Article(url, headers=HEADERS)
         article.download()
         article.parse()
         
+        if not article.text:
+            print(f"Warning: Parsing succeeded for '{article.title}', but no main text was extracted.")
+            return jsonify({'error': 'Could not extract main article text.'})
+
         print(f"Successfully parsed article: {article.title}")
         
-        # Return the extracted data
+        # Split the article text into sentences
+        sentences = sent_tokenize(article.text)
+        
+        # Respond with title and sentences
         return jsonify({
             'title': article.title,
-            'text': article.text
+            'sentences': sentences
         })
 
     except Exception as e:
@@ -48,5 +66,4 @@ def extract_article():
 
 # --- Main Execution ---
 if __name__ == '__main__':
-    # Runs the Flask app on localhost at port 5000
     app.run(port=5000, debug=True)
