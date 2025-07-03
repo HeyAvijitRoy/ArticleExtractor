@@ -1,4 +1,3 @@
-# app.py
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from newspaper import Article, Config
@@ -51,4 +50,3 @@ def extract_article():
 if __name__ == '__main__':
     # Runs the Flask app on localhost at port 5000
     app.run(port=5000, debug=True)
-
