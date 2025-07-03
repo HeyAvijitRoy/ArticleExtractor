@@ -9,8 +9,8 @@ import os
 import nltk
 
 # --- NLTK Data Path Configuration ---
-NLTK_DATA_DIR = r'C:\Users\Avijit.Pi-ThinkPad\nltk_data'
-nltk.data.path.clear()  # Remove default paths (sanity)
+NLTK_DATA_DIR = os.path.join(os.path.expanduser("~"), "nltk_data")
+nltk.data.path.clear()
 nltk.data.path.append(NLTK_DATA_DIR)
 
 from nltk.tokenize import sent_tokenize
