@@ -10,6 +10,14 @@ import nltk
 
 # --- NLTK Data Path Configuration ---
 NLTK_DATA_DIR = os.path.join(os.path.expanduser("~"), "nltk_data")
+os.makedirs(NLTK_DATA_DIR, exist_ok=True)
+
+# Download 'punkt' at startup if missing
+try:
+    nltk.data.find("tokenizers/punkt")
+except LookupError:
+    nltk.download("punkt", download_dir=NLTK_DATA_DIR)
+    
 nltk.data.path.clear()
 nltk.data.path.append(NLTK_DATA_DIR)
 

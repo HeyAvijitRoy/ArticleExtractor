@@ -1,6 +1,9 @@
 // Author: Avijit Roy
 // The URL of your local Python server
-const SERVER_URL = 'http://127.0.0.1:5000/extract';
+// const SERVER_URL = 'http://127.0.0.1:5000/extract';
+const SERVER_URL = 'https://articleextractor.onrender.com/extract';
+
+
 // Listen for messages from the popup
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === "extractText") {

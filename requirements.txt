@@ -1,5 +1,5 @@
 flask-cors
 newspaper3k
-nltk
+nltk==3.8.1
 gunicorn
 lxml[html_clean]
