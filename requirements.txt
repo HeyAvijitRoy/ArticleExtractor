@@ -2,3 +2,4 @@ flask-cors
 newspaper3k
 nltk
 gunicorn
+lxml[html_clean]
