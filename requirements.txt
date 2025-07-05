@@ -1,0 +1,4 @@
+flask-cors
+newspaper3k
+nltk
+gunicorn
