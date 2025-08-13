@@ -3,3 +3,6 @@ newspaper3k
 nltk==3.8.1
 gunicorn
 lxml[html_clean]
+requests
+trafilatura
+readability-lxml
