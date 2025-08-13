@@ -6,3 +6,5 @@ lxml[html_clean]
 requests
 trafilatura
 readability-lxml
+pandas
+openpyxl
