@@ -1,6 +1,6 @@
 # app.py
-# Strong extractor pipeline + smarter sentence splitting
-# Now supports DataFrame export (CSV/XLSX) via `format` in POST body.
+# Strong extractor pipeline + cleaning + smarter sentence splitting
+# Now: DataFrame export (CSV/XLSX), CSV uses UTF-8 BOM for Excel, optional ASCII normalization.
 
 from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
@@ -37,8 +37,7 @@ HEADERS = {
 
 # ---------- Flask app ----------
 app = Flask(__name__)
-# expose X-File-Name so the extension can read it
-CORS(app, expose_headers=["X-File-Name"])
+CORS(app, expose_headers=["X-File-Name"])  # let extension read custom header
 
 # ---------- HTML cleaning helpers ----------
 def _remove_matches(doc, xpath_expr):
@@ -165,6 +164,17 @@ def stitch_sentence_fragments(sents):
         i += 1
     return merged
 
+# --- Optional ASCII normalization (smart quotes/dashes -> plain) ---
+ASCII_MAP = {
+    '\u2018': "'", '\u2019': "'", '\u201A': ',', '\u201B': "'",
+    '\u201C': '"', '\u201D': '"', '\u201E': '"', '\u00AB': '"', '\u00BB': '"',
+    '\u2013': '-', '\u2014': '-', '\u2015': '-', '\u2212': '-',
+    '\u2026': '...', '\u00A0': ' ', '\u2009': ' ', '\u200A': ' ',
+    '\u200B': '',  '\uFEFF': ''
+}
+def ascii_clean_text(s: str) -> str:
+    return ''.join(ASCII_MAP.get(ch, ch) for ch in s)
+
 # ---------- Extractors ----------
 def extract_with_trafilatura(cleaned_html: str, url: str):
     try:
@@ -232,7 +242,8 @@ def extract_article():
 
     url = data['url']
     out_format = (data.get('format') or 'json').lower().strip()
-    print(f"Received URL: {url} | format={out_format}")
+    ascii_clean = bool(data.get('ascii_clean', False))
+    print(f"Received URL: {url} | format={out_format} | ascii_clean={ascii_clean}")
 
     try:
         resp = requests.get(url, headers=HEADERS, timeout=25)
@@ -256,6 +267,11 @@ def extract_article():
         sentences = sent_tokenize(text)
         sentences = stitch_sentence_fragments(sentences)
 
+        if ascii_clean:
+            sentences = [ascii_clean_text(s) for s in sentences]
+            if title:
+                title = ascii_clean_text(title)
+
         if not title:
             try:
                 doc = Document(raw_html)
@@ -274,10 +290,11 @@ def extract_article():
         })
 
         if out_format == 'csv':
-            csv_data = df.to_csv(index=False)
+            csv_text = df.to_csv(index=False)        # str
+            csv_bytes = csv_text.encode('utf-8-sig') # add BOM so Excel reads UTF-8
             filename = safe_filename(title, 'csv')
             return Response(
-                csv_data,
+                csv_bytes,
                 mimetype='text/csv; charset=utf-8',
                 headers={
                     'X-File-Name': filename,

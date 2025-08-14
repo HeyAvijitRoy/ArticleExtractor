@@ -11,18 +11,21 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       }
 
       const articleUrl = activeTab.url;
-      console.log(`Sending URL to server: ${articleUrl} as ${request.format || 'json'}`);
+      console.log(`Sending URL to server: ${articleUrl} as ${request.format || 'json'} (ascii_clean=${!!request.ascii_clean})`);
 
       fetch(SERVER_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: articleUrl, format: request.format || 'json' }),
+        body: JSON.stringify({
+          url: articleUrl,
+          format: request.format || 'json',
+          ascii_clean: !!request.ascii_clean
+        }),
       })
       .then(async (response) => {
         if (!response.ok) throw new Error(`Server responded with status: ${response.status}`);
         const contentType = (response.headers.get('content-type') || '').toLowerCase();
 
-        // JSON (default old flow)
         if (contentType.includes('application/json')) {
           const data = await response.json();
           if (data.error) {
@@ -46,13 +49,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           return;
         }
 
-        // CSV or XLSX: treat as blob and convert to data URL for downloads API
+        // CSV/XLSX
         const blob = await response.blob();
-        const xFileName = response.headers.get('X-File-Name') || (request.format === 'xlsx' ? 'article.xlsx' : 'article.csv');
+        const xFileName = response.headers.get('X-File-Name') ||
+                          ((request.format === 'xlsx') ? 'article.xlsx' : 'article.csv');
 
         const reader = new FileReader();
         reader.onloadend = () => {
-          const dataUrl = reader.result; // data:...;base64,...
+          const dataUrl = reader.result;
           chrome.downloads.download({
             url: dataUrl,
             filename: xFileName,
@@ -68,7 +72,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       });
     });
 
-    // Keep the message channel open for async sendResponse
-    return true;
+    return true; // keep channel open for async sendResponse
   }
 });
