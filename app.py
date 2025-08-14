@@ -1,8 +1,8 @@
 # app.py
-# Flask backend for extracting and sentence-splitting news articles via NLTK
-# Stronger pipeline + cleaning + smarter sentence splitting around quotes/titles.
+# Strong extractor pipeline + smarter sentence splitting
+# Now supports DataFrame export (CSV/XLSX) via `format` in POST body.
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 from newspaper import Article
 import os
@@ -10,6 +10,8 @@ import nltk
 import requests
 import json
 import re
+from io import BytesIO
+import pandas as pd
 from lxml import html as lxml_html
 from lxml import etree as lxml_etree
 from readability import Document
@@ -18,25 +20,27 @@ import trafilatura
 # ---------- NLTK setup ----------
 NLTK_DATA_DIR = os.path.join(os.path.expanduser("~"), "nltk_data")
 os.makedirs(NLTK_DATA_DIR, exist_ok=True)
-
 try:
     nltk.data.find("tokenizers/punkt")
 except LookupError:
     nltk.download("punkt", download_dir=NLTK_DATA_DIR)
-
 nltk.data.path.clear()
 nltk.data.path.append(NLTK_DATA_DIR)
 from nltk.tokenize import sent_tokenize
 
 # ---------- Request headers ----------
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                  " (KHTML, like Gecko) Chrome/115.0 Safari/537.36",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
 }
 
-# ---------- Cleaning helpers ----------
+# ---------- Flask app ----------
+app = Flask(__name__)
+# expose X-File-Name so the extension can read it
+CORS(app, expose_headers=["X-File-Name"])
+
+# ---------- HTML cleaning helpers ----------
 def _remove_matches(doc, xpath_expr):
     for el in doc.xpath(xpath_expr):
         parent = el.getparent()
@@ -61,7 +65,6 @@ def remove_overlays_sidebars_and_junk(raw_html: str) -> str:
     except Exception:
         return raw_html
 
-    # 1) Obvious overlays/popups by class/id keywords
     block_keywords = [
         "modal","popup","overlay","banner","cookie","gdpr",
         "subscribe","newsletter","consent","paywall","signin",
@@ -73,10 +76,8 @@ def remove_overlays_sidebars_and_junk(raw_html: str) -> str:
         _remove_matches(doc, f"//*[contains(translate(@class,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'), '{kw}')]")
         _remove_matches(doc, f"//*[contains(translate(@id,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'), '{kw}')]")
 
-    # 2) Dialog roles
     _remove_matches(doc, "//*[@role='dialog' or @role='alertdialog']")
 
-    # 3) Inline styles that scream overlay
     for el in list(doc.xpath('//*[@style]')):
         style = (el.attrib.get('style') or '').lower().replace(' ', '')
         kill = False
@@ -89,21 +90,17 @@ def remove_overlays_sidebars_and_junk(raw_html: str) -> str:
             if par is not None:
                 par.remove(el)
 
-    # 4) Scripts/iframes and common non-content regions
     _remove_matches(doc, '//script | //noscript | //iframe')
     _remove_matches(doc, '//nav | //footer | //aside | //*[@role="complementary"] | //*[@role="navigation"] | //*[@role="contentinfo"]')
 
-    # 5) Remove editorial side modules
     side_block_keywords = [
         "editors’ picks","editor’s picks","editors' picks","most popular","trending",
         "you might have missed","sponsored","from around the web","recommended","more stories"
     ]
     _remove_if_text_found(doc, '//h1|//h2|//h3|//h4|//div|//section', side_block_keywords, bubble_up_levels=2)
 
-    # 6) Remove image containers/captions to avoid caption text
     _remove_matches(doc, '//figure | //figcaption | //picture')
 
-    # 7) Prefer keeping only the <article> contents, if available
     articles = doc.xpath('//article')
     if articles:
         article_el = articles[0]
@@ -115,7 +112,6 @@ def remove_overlays_sidebars_and_junk(raw_html: str) -> str:
         except Exception:
             pass
 
-    # 8) schema.org Article fallback
     schema_nodes = doc.xpath('//*[@itemtype="http://schema.org/Article" or @itemtype="https://schema.org/Article"]')
     if schema_nodes:
         candidate = schema_nodes[0]
@@ -127,48 +123,28 @@ def remove_overlays_sidebars_and_junk(raw_html: str) -> str:
         except Exception:
             pass
 
-    # Otherwise return cleaned full doc
     try:
         return lxml_html.tostring(doc, encoding='unicode')
     except Exception:
         return raw_html
 
-# ---------- Sentence cleanup helpers ----------
+# ---------- Sentence cleanup ----------
 TITLE_TOKENS = {"Mr.", "Ms.", "Mrs.", "Dr.", "Prof.", "Sr.", "Jr.", "Gen.", "Sen.", "Rep.", "Gov.", "St."}
 TITLE_RE = r'(Mr|Ms|Mrs|Dr|Prof|Sen|Rep|Gov|Gen|St|Sr|Jr)\.'
 
 def normalize_for_tokenization(text: str) -> str:
-    """
-    Fix common joins that confuse sentence tokenizers:
-    - 'Italy.Mr.' -> 'Italy. Mr.'
-    - 'Very friendly.”Mr.' -> 'Very friendly.” Mr.'
-    """
-    # Space after a period when next char is Capital and char before dot is lowercase
-    text = re.sub(r'(?<=[a-z])\.(?=[A-Z])', '. ', text)
-
-    # Space before courtesy titles when glued to a period: 'Italy.Mr.' -> 'Italy. Mr.'
-    text = re.sub(r'\.(?=\s*' + TITLE_RE + r')', '. ', text)
-
-    # Space after a closing quote if a title follows (handles ” and ")
-    text = re.sub(r'([\.!?][»”"])\s*(?=' + TITLE_RE + r')', r'\1 ', text)
-    # Also if there was no punctuation before the quote: '”Mr.' -> '” Mr.'
-    text = re.sub(r'([»”"])(?=' + TITLE_RE + r')', r'\1 ', text)
-
-    # Collapse excessive internal whitespace
+    text = re.sub(r'(?<=[a-z])\.(?=[A-Z])', '. ', text)                   # Italy.Mr. -> Italy. Mr.
+    text = re.sub(r'\.(?=\s*' + TITLE_RE + r')', '. ', text)              # ensure space before title
+    text = re.sub(r'([\.!?][»”"])\s*(?=' + TITLE_RE + r')', r'\1 ', text) # …”Mr. -> …” Mr.
+    text = re.sub(r'([»”"])(?=' + TITLE_RE + r')', r'\1 ', text)          # ”Mr. -> ” Mr.
     text = re.sub(r'[ \t]+', ' ', text)
     return text
 
 def stitch_sentence_fragments(sents):
-    """
-    1) Merge tiny fragments like 'Mr.' / 'Ms.' / 'Dr.' that got split off.
-    2) If a sentence ends with a title token (rare), merge it with the next one.
-    """
     merged = []
     i = 0
     while i < len(sents):
         cur = sents[i].strip()
-
-        # Case A: standalone courtesy title or single-letter initial
         if cur in TITLE_TOKENS or re.fullmatch(r'[A-Z]\.', cur):
             if i + 1 < len(sents):
                 nxt = sents[i + 1].lstrip()
@@ -178,8 +154,6 @@ def stitch_sentence_fragments(sents):
                     merged.append(cur + ' ' + nxt)
                 i += 2
                 continue
-
-        # Case B: sentence ends with a title token (e.g., '... ” Mr.' as end)
         if re.search(r'(?:\b' + TITLE_RE + r')\s*$', cur):
             if i + 1 < len(sents):
                 nxt = sents[i + 1].lstrip()
@@ -187,7 +161,6 @@ def stitch_sentence_fragments(sents):
                 merged.append(cur)
                 i += 2
                 continue
-
         merged.append(cur)
         i += 1
     return merged
@@ -196,13 +169,8 @@ def stitch_sentence_fragments(sents):
 def extract_with_trafilatura(cleaned_html: str, url: str):
     try:
         result = trafilatura.extract(
-            cleaned_html,
-            url=url,
-            output="json",
-            with_metadata=True,
-            include_images=False,
-            include_tables=False,
-            favor_recall=True,
+            cleaned_html, url=url, output="json", with_metadata=True,
+            include_images=False, include_tables=False, favor_recall=True
         )
         if not result:
             return None, None
@@ -249,10 +217,13 @@ def extract_with_newspaper(url: str, cleaned_html: str = None):
     except Exception:
         return None, None
 
-# ---------- Flask app ----------
-app = Flask(__name__)
-CORS(app)
+# ---------- helpers ----------
+def safe_filename(title: str, ext: str) -> str:
+    base = (title or "article").lower()
+    base = re.sub(r'[^a-z0-9]+', '_', base).strip('_') or 'article'
+    return f"{base}.{ext}"
 
+# ---------- Route ----------
 @app.route('/extract', methods=['POST'])
 def extract_article():
     data = request.get_json()
@@ -260,18 +231,16 @@ def extract_article():
         return jsonify({'error': 'URL not provided'}), 400
 
     url = data['url']
-    print(f"Received URL for processing: {url}")
+    out_format = (data.get('format') or 'json').lower().strip()
+    print(f"Received URL: {url} | format={out_format}")
 
     try:
-        # 1) Fetch raw HTML
         resp = requests.get(url, headers=HEADERS, timeout=25)
         resp.raise_for_status()
         raw_html = resp.text
 
-        # 2) Clean overlays/junk
         cleaned_html = remove_overlays_sidebars_and_junk(raw_html)
 
-        # 3) Try extractors in order
         title, text = extract_with_trafilatura(cleaned_html, url)
         if not text:
             title, text = extract_with_readability(cleaned_html)
@@ -283,12 +252,10 @@ def extract_article():
         if not text:
             return jsonify({'error': 'Could not extract main article text.'}), 200
 
-        # 4) Normalize, tokenize, stitch
         text = normalize_for_tokenization(text)
         sentences = sent_tokenize(text)
         sentences = stitch_sentence_fragments(sentences)
 
-        # 5) Title fallback
         if not title:
             try:
                 doc = Document(raw_html)
@@ -296,10 +263,45 @@ def extract_article():
             except Exception:
                 title = ""
 
-        return jsonify({
-            'title': title,
-            'sentences': sentences
+        # ----- JSON (default) -----
+        if out_format == 'json':
+            return jsonify({'title': title, 'sentences': sentences})
+
+        # ----- DataFrame: CSV/XLSX -----
+        df = pd.DataFrame({
+            'line_no': list(range(1, len(sentences)+1)),
+            'sentence': sentences
         })
+
+        if out_format == 'csv':
+            csv_data = df.to_csv(index=False)
+            filename = safe_filename(title, 'csv')
+            return Response(
+                csv_data,
+                mimetype='text/csv; charset=utf-8',
+                headers={
+                    'X-File-Name': filename,
+                    'Content-Disposition': f'attachment; filename="{filename}"'
+                }
+            )
+
+        if out_format == 'xlsx':
+            bio = BytesIO()
+            with pd.ExcelWriter(bio, engine='openpyxl') as writer:
+                df.to_excel(writer, index=False, sheet_name='sentences')
+            bio.seek(0)
+            filename = safe_filename(title, 'xlsx')
+            return Response(
+                bio.getvalue(),
+                mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                headers={
+                    'X-File-Name': filename,
+                    'Content-Disposition': f'attachment; filename="{filename}"'
+                }
+            )
+
+        # Unknown format -> default JSON
+        return jsonify({'title': title, 'sentences': sentences})
 
     except Exception as e:
         print(f"An error occurred: {e}")
