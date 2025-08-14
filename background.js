@@ -1,64 +1,66 @@
 // Author: Avijit Roy
-// The URL of your local Python server
 const SERVER_URL = 'http://127.0.0.1:5000/extract';
-// const SERVER_URL = 'https://articleextractor.onrender.com/extract';
 
-
-// Listen for messages from the popup
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === "extractText") {
-    // Get the currently active tab
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       const activeTab = tabs[0];
       if (!activeTab || !activeTab.url) {
-        // Send a status update back to the popup
         chrome.runtime.sendMessage({ action: "updateStatus", status: "Error: Could not get tab URL." });
         return;
       }
 
       const articleUrl = activeTab.url;
-      console.log(`Sending URL to server: ${articleUrl}`);
+      console.log(`Sending URL to server: ${articleUrl} as ${request.format || 'json'}`);
 
-      // Use the fetch API to send the URL to the Python server
       fetch(SERVER_URL, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ url: articleUrl }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: articleUrl, format: request.format || 'json' }),
       })
-      .then(response => {
-        // Check if the server responded successfully
-        if (!response.ok) {
-          throw new Error(`Server responded with status: ${response.status}`);
-        }
-        return response.json(); // Parse the JSON from the response
-      })
-      .then(data => {
-        // The server's response is in 'data'
-        if (data.error) {
-          console.error("Server returned an error:", data.error);
-          chrome.runtime.sendMessage({ action: "updateStatus", status: `Server Error: ${data.error}` });
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`Server responded with status: ${response.status}`);
+        const contentType = (response.headers.get('content-type') || '').toLowerCase();
+
+        // JSON (default old flow)
+        if (contentType.includes('application/json')) {
+          const data = await response.json();
+          if (data.error) {
+            console.error("Server returned an error:", data.error);
+            chrome.runtime.sendMessage({ action: "updateStatus", status: `Server Error: ${data.error}` });
+            sendResponse({ status: "Error." });
+            return;
+          }
+
+          const sentences = data.sentences || [];
+          const jsonContent = JSON.stringify(sentences, null, 2);
+          const url = 'data:application/json;charset=utf-8,' + encodeURIComponent(jsonContent);
+
+          const pageTitle = (data.title || 'article').replace(/[^a-z0-9]/gi, '_').toLowerCase();
+          chrome.downloads.download({
+            url,
+            filename: `${pageTitle}_export.json`,
+            saveAs: true
+          });
+          sendResponse({ status: "Download initiated." });
           return;
         }
 
-        console.log("Received sentences from server.");
-        // Use sentences directly from the server response
-        let sentences = data.sentences || [];
+        // CSV or XLSX: treat as blob and convert to data URL for downloads API
+        const blob = await response.blob();
+        const xFileName = response.headers.get('X-File-Name') || (request.format === 'xlsx' ? 'article.xlsx' : 'article.csv');
 
-        const jsonContent = JSON.stringify(sentences, null, 2);
-        const url = 'data:application/json;charset=utf-8,' + encodeURIComponent(jsonContent);
-
-        // Use the article title from the server for the filename
-        const pageTitle = data.title ? data.title.replace(/[^a-z0-9]/gi, '_').toLowerCase() : 'article';
-
-        chrome.downloads.download({
-          url: url,
-          filename: `${pageTitle}_export.json`,
-          saveAs: true
-        });
-
-        sendResponse({ status: "Download initiated." });
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const dataUrl = reader.result; // data:...;base64,...
+          chrome.downloads.download({
+            url: dataUrl,
+            filename: xFileName,
+            saveAs: true
+          });
+          sendResponse({ status: "Download initiated." });
+        };
+        reader.readAsDataURL(blob);
       })
       .catch(error => {
         console.error('Failed to fetch from server:', error);
@@ -66,7 +68,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       });
     });
 
-    // Return true to indicate that we will send a response asynchronously
+    // Keep the message channel open for async sendResponse
     return true;
   }
 });

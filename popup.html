@@ -3,27 +3,21 @@
 <head>
   <title>Article Extractor</title>
   <style>
-    body {
-      font-family: Arial, sans-serif;
-      width: 200px;
-      padding: 10px;
-      text-align: center;
-    }
-    button {
-      width: 100%;
-      padding: 10px;
-      font-size: 14px;
-      cursor: pointer;
-    }
-    #status {
-      margin-top: 10px;
-      font-size: 12px;
-    }
+    body { font-family: Arial, sans-serif; width: 220px; padding: 10px; text-align: center; }
+    button, select { width: 100%; padding: 10px; font-size: 14px; cursor: pointer; margin-top: 6px; }
+    #status { margin-top: 10px; font-size: 12px; }
+    label { display:block; margin-top: 6px; font-size:12px; text-align:left; }
   </style>
 </head>
 <body>
   <h3>Article Text Extractor</h3>
-  <button id="extractBtn">Extract Text & Download JSON</button>
+  <label for="format">Export format</label>
+  <select id="format">
+    <option value="json" selected>JSON (sentences)</option>
+    <option value="csv">CSV (DataFrame)</option>
+    <option value="xlsx">Excel (DataFrame)</option>
+  </select>
+  <button id="extractBtn">Extract & Download</button>
   <div id="status"></div>
   <script src="popup.js"></script>
 </body>
